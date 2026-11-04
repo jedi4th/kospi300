@@ -12,13 +12,25 @@ W = dict(liq=.25, hot=.20, mom=.20, dip=.15, hold=.15, trend=.05)   # 점수 가
 now = lambda: dt.datetime.now(KST)
 
 
-def get(url, headers=None, **kw):
-    for _ in range(3):
+LOG = []
+
+
+def log(*a):
+    s = " ".join(map(str, a))
+    print(s)
+    LOG.append(s)
+
+
+def get(url, headers=None, tries=3, **kw):
+    for _ in range(tries):
         try:
             r = requests.get(url, headers={**UA, **(headers or {})}, timeout=15, **kw)
             r.raise_for_status()
             return r
-        except Exception:
+        except Exception as e:
+            code = getattr(getattr(e, "response", None), "status_code", "-")
+            if len(LOG) < 14:
+                log("GET 실패", url[:80], type(e).__name__, code)
             time.sleep(1.5)
 
 
@@ -42,15 +54,32 @@ def universe():
                 out.setdefault(c, n)
         if len(out) >= TOP_N:
             break
+    log("유니버스(시총 페이지)", len(out))
+    if len(out) < TOP_N:                               # 폴백: 모바일 시총 순위 API
+        for p in range(1, 6):
+            r = get("https://m.stock.naver.com/api/stocks/marketValue/KOSPI", params={"page": p, "pageSize": 100}, tries=1)
+            try:
+                for s in r.json()["stocks"]:
+                    if s["itemCode"].endswith("0"):
+                        out.setdefault(s["itemCode"], s["stockName"])
+            except Exception:
+                break
+            if len(out) >= TOP_N:
+                break
+        log("유니버스(폴백 후)", len(out))
     return list(out.items())[:TOP_N]
 
 
 def quotes(codes):
     def f(ch):
-        r = get("https://polling.finance.naver.com/api/realtime/domestic/stock/" + ",".join(ch))
+        r = get("https://polling.finance.naver.com/api/realtime/domestic/stock/" + ",".join(ch), tries=2)
+        if r is None and len(ch) > 1:                  # 묶음 실패 -> 단건으로 재시도
+            return [x for c in ch for x in f([c])]
         try:
             ds = r.json()["datas"]
         except Exception:
+            if r is not None and len(LOG) < 14:
+                log("시세 파싱 실패", r.text[:200].replace("\n", " "))
             return []
         out = []
         for i, d in enumerate(ds):   # 종목코드 필드명이 다를 수 있어 순서로도 보정
@@ -129,7 +158,11 @@ def main():
     uni = universe()
     names, mc = dict(uni), {c: i + 1 for i, (c, _) in enumerate(uni)}
     rows = []
-    for c, d in quotes([c for c, _ in uni]).items():
+    qs = quotes([c for c, _ in uni])
+    log("시세 응답 종목수", len(qs))
+    if qs:
+        log("샘플", json.dumps(next(iter(qs.values())), ensure_ascii=False)[:500])
+    for c, d in qs.items():
         try:
             cur, op, hi, vol, amt, chv, fr = (num(d[k]) for k in (
                 "closePrice", "openPrice", "highPrice", "accumulatedTradingVolume", "accumulatedTradingValue",
@@ -147,7 +180,9 @@ def main():
                          amt=round(amt * u / 1e8, 1), chg=cur / prev - 1, gap=op / prev - 1, hi_chg=hi / prev - 1,
                          pull=1 - cur / hi, vwap=vw, vs_vwap=cur / vw - 1))
     if len(rows) < 30:
-        print("수집 종목 부족(휴장/장 시작 전/차단) -> 종료:", len(rows))
+        log("수집 종목 부족(휴장/장 시작 전/차단) -> 종료:", len(rows))
+        os.makedirs("docs", exist_ok=True)
+        open("docs/debug.txt", "w", encoding="utf-8").write(now().strftime("%Y-%m-%d %H:%M:%S KST") + "\n" + "\n".join(LOG))
         return
     full = pd.DataFrame(rows).set_index("code")
     full["liq"] = full.amt.rank(pct=True)
