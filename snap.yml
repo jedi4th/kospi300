@@ -1,0 +1,38 @@
+name: snap
+on:
+  schedule:
+    - cron: "45 23 * * 0-4"   # 08:45 KST 기동 -> 09:10 슬롯 (UTC 일~목 = KST 월~금)
+    - cron: "3 0 * * 1-5"     # 09:03 KST 기동 -> 09:26 슬롯
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "0910 / 0926 / now(즉시 실행)"
+        default: "now"
+
+concurrency:
+  group: snap
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      SLOT: ${{ github.event_name == 'workflow_dispatch' && inputs.slot || (github.event.schedule == '45 23 * * 0-4' && '0910' || '0926') }}
+      NAVER_ID: ${{ secrets.NAVER_ID }}
+      NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests pandas yfinance
+      - run: python collect.py
+      - run: |
+          git config user.name snap-bot
+          git config user.email snap-bot@users.noreply.github.com
+          git add docs
+          git diff --cached --quiet || { git commit -m "snap $SLOT" && git pull --rebase && git push; }
