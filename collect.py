@@ -30,7 +30,7 @@ def get(url, headers=None, tries=3, **kw):
             return r
         except Exception as e:
             code = getattr(getattr(e, "response", None), "status_code", "-")
-            if len(LOG) < 14:
+            if len(LOG) < 30:
                 log("GET 실패", url[:80], type(e).__name__, code)
             time.sleep(1.5)
 
@@ -39,6 +39,19 @@ def tick(p):
     """코스피 호가단위로 가장 가까운 가격"""
     t = 1 if p < 2000 else 5 if p < 5000 else 10 if p < 20000 else 50 if p < 50000 else 100 if p < 200000 else 500 if p < 500000 else 1000
     return round(p / t) * t
+
+
+def won(s):
+    """'3,975억' '1조 2,345억' '397,538백만' -> 원. 단위 접미사가 없으면 None"""
+    u = {"조": 1e12, "억": 1e8, "백만": 1e6, "천만": 1e7, "만": 1e4}
+    m = re.findall(r"([\d,.]+)\s*(조|억|백만|천만|만)", str(s))
+    return sum(num(a) * u[b] for a, b in m) if m else None
+
+
+def shr(s):
+    """거래량 문자열 -> 주 (천주/만주 접미사 처리)"""
+    n, t = num(s), str(s)
+    return n * 1000 if "천주" in t else n * 1e4 if "만주" in t else n
 
 
 def num(x):
@@ -124,30 +137,46 @@ def daily(c):
     return c, dict(avgv=sum(vo[-n:]) / n, ret5=cl[-1] / cl[-6] - 1, ma20=sum(cl[-n:]) / n)
 
 
-def flow(kind):
-    """외국인/기관 순매수 상위 종목 -> {코드: 순위}. 비공식 주소라 실패하면 빈 dict"""
-    out = {}
+def detail(c):
+    r = get(f"https://m.stock.naver.com/api/stock/{c}/integration", tries=2)
+    try:
+        t = {x["code"]: x["value"] for x in r.json()["totalInfos"]}
+        return c, dict(w=won(t["accumulatedTradingValue"]), sh=shr(t["accumulatedTradingVolume"]),
+                       raw=(t["accumulatedTradingValue"], t["accumulatedTradingVolume"]))
+    except Exception:
+        return c, None
 
-    def walk(o):
+
+def flow(kind):
+    """외국인('f')/기관('o') 순매수 상위 {코드: 순위}. 비공식 주소 후보를 차례로 시도하고 결과를 로그에 남긴다"""
+    inv, order = {"f": ("FOREIGNER", "foreignPureBuy"), "o": ("ORGANIZATION", "organizationPureBuy")}[kind]
+    base = "https://stock.naver.com/api/domestic/market/"
+    cand = [("trend/trendForeignOrg", dict(investorType=x, tradeType="KRX", marketType="ALL", periodType="DAY"))
+            for x in ([inv] if kind == "f" else [inv, "ORGAN", "INSTITUTION"])]
+    cand.append(("stock/default", dict(tradeType="KRX", marketType="ALL", orderType=order)))
+
+    def walk(o, out):
         if isinstance(o, dict):
             if "itemCode" in o:
                 out.setdefault(o["itemCode"], len(out) + 1)
             for v in o.values():
-                walk(v)
+                walk(v, out)
         elif isinstance(o, list):
             for v in o:
-                walk(v)
-    for mt in ("KOSPI", "ALL"):
-        r = get("https://stock.naver.com/api/domestic/market/stock/default", tries=1,
-                params={"tradeType": "KRX", "marketType": mt, "orderType": kind, "startIdx": 0, "pageSize": 100})
-        try:
-            walk(r.json())
-        except Exception:
-            pass
-        if out:
-            break
-    log("수급", kind, len(out))
-    return out
+                walk(v, out)
+    for path, p in cand:
+        for size in (100, 20):
+            out = {}
+            r = get(base + path, tries=1, params={**p, "startIdx": 0, "pageSize": size})
+            try:
+                walk(r.json(), out)
+            except Exception:
+                pass
+            log("수급", kind, path, p.get("investorType") or p.get("orderType"), size, "->", len(out),
+                "" if out or r is None else r.text[:150].replace("\n", " "))
+            if out:
+                return out
+    return {}
 
 
 def macro():
@@ -174,14 +203,19 @@ def news(name):
         return ""
 
 
+def dump():
+    os.makedirs("docs", exist_ok=True)
+    open("docs/debug.txt", "w", encoding="utf-8").write(now().strftime("%Y-%m-%d %H:%M:%S KST") + "\n" + "\n".join(LOG))
+
+
 def main():
     uni = universe()
     names, mc = dict(uni), {c: i + 1 for i, (c, _) in enumerate(uni)}
     rows = []
     qs = quotes([c for c, _ in uni])
     log("시세 응답 종목수", len(qs))
-    if qs:
-        log("샘플", json.dumps(next(iter(qs.values())), ensure_ascii=False)[:500])
+    for c in dict.fromkeys(([next(iter(qs))] if qs else []) + (["005930"] if "005930" in qs else [])):
+        log("원시", c, {k: qs[c].get(k) for k in ("closePrice", "accumulatedTradingVolume", "accumulatedTradingValue", "marketStatus", "localTradedAt")})
     for c, d in qs.items():
         try:
             cur, op, hi, vol, amt, chv, fr = (num(d[k]) for k in (
@@ -189,20 +223,21 @@ def main():
                 "compareToPreviousClosePrice", "fluctuationsRatio"))
         except Exception:
             continue
+        vol = shr(d["accumulatedTradingVolume"])
         if fr * chv < 0:                               # 변동폭 부호 보정
             chv = -chv
         prev = cur - chv
         if vol <= 0 or amt <= 0 or cur <= 0 or prev <= 0 or op <= 0 or hi <= 0:
             continue
-        u = min((1e8, 1e6, 1e3, 1), key=lambda u: abs(amt * u / vol / cur - 1))   # 거래대금 단위 자동 보정
-        vw = amt * u / vol
+        w = won(d["accumulatedTradingValue"]) or amt * min((1e8, 1e6, 1e3, 1), key=lambda u: abs(amt * u / vol / cur - 1))
+        vw = w / vol
         rows.append(dict(code=c, name=names.get(c, c), mc=mc.get(c, 0), prev=prev, cur=cur, open=op, high=hi, vol=vol,
-                         amt=round(amt * u / 1e8, 1), chg=cur / prev - 1, gap=op / prev - 1, hi_chg=hi / prev - 1,
+                         amt=round(w / 1e8, 1), chg=cur / prev - 1, gap=op / prev - 1, hi_chg=hi / prev - 1,
                          pull=1 - cur / hi, vwap=vw, vs_vwap=cur / vw - 1))
     if len(rows) < 30:
         log("수집 종목 부족(휴장/장 시작 전/차단) -> 종료:", len(rows))
         os.makedirs("docs", exist_ok=True)
-        open("docs/debug.txt", "w", encoding="utf-8").write(now().strftime("%Y-%m-%d %H:%M:%S KST") + "\n" + "\n".join(LOG))
+        dump()
         return
     full = pd.DataFrame(rows).set_index("code")
     full["liq"] = full.amt.rank(pct=True)
@@ -212,6 +247,18 @@ def main():
     with TP(8) as ex:
         dd = dict(ex.map(daily, pick))
     df = full.loc[list(pick)].copy()
+    with TP(8) as ex:
+        det = dict(ex.map(detail, pick))
+    ok = 0
+    for c in df.index:
+        x = det.get(c)
+        if x and x["w"] and x["sh"]:
+            if ok < 4:
+                log("대금 비교", c, "폴링", df.at[c, "amt"], "억 / 상세", round(x["w"] / 1e8, 1), "억", x["raw"])
+            df.at[c, "amt"], df.at[c, "vol"], df.at[c, "vwap"] = round(x["w"] / 1e8, 1), x["sh"], x["w"] / x["sh"]
+            ok += 1
+    log("대금 상세 보정", ok, "/", len(df))
+    df["vs_vwap"] = df.cur / df.vwap - 1
     for k in ("avgv", "ret5", "ma20"):
         df[k] = [(dd.get(c) or {}).get(k) for c in df.index]
     df["vmult"] = df.vol / df.avgv
@@ -239,7 +286,7 @@ def main():
               open(f"docs/snap_{SLOT}.json", "w"))
 
     top = df.sort_values("score", ascending=False).head(SHOW)
-    fo, og = flow("foreignPureBuy"), flow("organizationPureBuy")
+    fo, og = flow("f"), flow("o")
     nw = {c: news(top.loc[c, "name"]) for c in top.index[:15]}
     mac, kc = macro(), kospi_chg()
 
@@ -276,7 +323,8 @@ pre{{font-size:11px;overflow-x:auto;border:1px solid var(--line);padding:8px}}bu
 <div class="w"><table><thead><tr>{th}</tr></thead><tbody>{tb}</tbody></table></div>
 <p><button onclick="navigator.clipboard.writeText(document.getElementById('t').textContent)">표 복사</button></p>
 <pre id="t">{html.escape(tsv)}</pre></body></html>""")
-    print("완료", SLOT, stamp, len(full), len(top))
+    log("완료", SLOT, stamp, len(full), len(top))
+    dump()
 
 
 if __name__ == "__main__":
