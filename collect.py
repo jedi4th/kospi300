@@ -8,6 +8,7 @@ KST = dt.timezone(dt.timedelta(hours=9))
 UA = {"User-Agent": "Mozilla/5.0"}
 SLOT = os.getenv("SLOT", "now")            # 0910 / 0926 / now
 TOP_N, SHOW = 300, 40
+ETF = re.compile(r"^(KODEX|TIGER|ACE|RISE|SOL|HANARO|KOSEF|PLUS|ARIRANG|KBSTAR|TIMEFOLIO|1Q|KIWOOM|마이티|TRUSTON|BNK|ITF|KoAct|WON|FOCUS|TREX|UNICORN|히어로즈)\s|ETN|레버리지|인버스|커버드콜")
 W = dict(liq=.25, hot=.20, mom=.20, dip=.15, hold=.15, trend=.05)   # 점수 가중치 (여기만 고치면 됨)
 now = lambda: dt.datetime.now(KST)
 
@@ -34,6 +35,12 @@ def get(url, headers=None, tries=3, **kw):
             time.sleep(1.5)
 
 
+def tick(p):
+    """코스피 호가단위로 가장 가까운 가격"""
+    t = 1 if p < 2000 else 5 if p < 5000 else 10 if p < 20000 else 50 if p < 50000 else 100 if p < 200000 else 500 if p < 500000 else 1000
+    return round(p / t) * t
+
+
 def num(x):
     try:
         return float(re.sub(r"[^\d.\-]", "", str(x)))
@@ -44,13 +51,13 @@ def num(x):
 def universe():
     """시총 순 코스피 종목 (우선주 제외: 보통주 코드는 0으로 끝남)"""
     out = {}
-    for p in range(1, 9):
+    for p in range(1, 14):
         r = get("https://finance.naver.com/sise/sise_market_sum.naver", params={"sosok": 0, "page": p})
         if not r:
             continue
         r.encoding = "euc-kr"
         for c, n in re.findall(r'code=([0-9A-Z]{6})" class="tltle">([^<]+)<', r.text):
-            if c.endswith("0"):
+            if c.endswith("0") and not ETF.search(n):
                 out.setdefault(c, n)
         if len(out) >= TOP_N:
             break
@@ -60,7 +67,7 @@ def universe():
             r = get("https://m.stock.naver.com/api/stocks/marketValue/KOSPI", params={"page": p, "pageSize": 100}, tries=1)
             try:
                 for s in r.json()["stocks"]:
-                    if s["itemCode"].endswith("0"):
+                    if s["itemCode"].endswith("0") and not ETF.search(s["stockName"]):
                         out.setdefault(s["itemCode"], s["stockName"])
             except Exception:
                 break
@@ -117,17 +124,30 @@ def daily(c):
     return c, dict(avgv=sum(vo[-n:]) / n, ret5=cl[-1] / cl[-6] - 1, ma20=sum(cl[-n:]) / n)
 
 
-def minute(c):
-    r = get("https://fchart.stock.naver.com/sise.nhn", params={"symbol": c, "timeframe": "minute", "count": 80, "requestType": 0})
-    if not r:
-        return c, None
-    m = [x for x in re.findall(r'data="(\d{12})\|[\d.]+\|([\d.]+)\|[\d.]+\|([\d.]+)\|(\d+)"', r.text) if x[0].startswith(TODAY)]
-    if len(m) < 5:
-        return c, None
-    hi, cl, vo = [float(x[1]) for x in m], [float(x[2]) for x in m], [float(x[3]) for x in m]
-    t = m[hi.index(max(hi))][0]
-    return c, dict(path=cl[4::5] + ([cl[-1]] if len(cl) % 5 else []), hi_t=f"{t[8:10]}:{t[10:12]}",
-                   fade=(sum(vo[-3:]) / 3) / (sum(vo) / len(vo)))
+def flow(kind):
+    """외국인/기관 순매수 상위 종목 -> {코드: 순위}. 비공식 주소라 실패하면 빈 dict"""
+    out = {}
+
+    def walk(o):
+        if isinstance(o, dict):
+            if "itemCode" in o:
+                out.setdefault(o["itemCode"], len(out) + 1)
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    for mt in ("KOSPI", "ALL"):
+        r = get("https://stock.naver.com/api/domestic/market/stock/default", tries=1,
+                params={"tradeType": "KRX", "marketType": mt, "orderType": kind, "startIdx": 0, "pageSize": 100})
+        try:
+            walk(r.json())
+        except Exception:
+            pass
+        if out:
+            break
+    log("수급", kind, len(out))
+    return out
 
 
 def macro():
@@ -172,9 +192,9 @@ def main():
         if fr * chv < 0:                               # 변동폭 부호 보정
             chv = -chv
         prev = cur - chv
-        if vol <= 0 or prev <= 0 or op <= 0 or hi <= 0:
+        if vol <= 0 or amt <= 0 or cur <= 0 or prev <= 0 or op <= 0 or hi <= 0:
             continue
-        u = min((1e6, 1e3, 1), key=lambda u: abs(amt * u / vol / cur - 1))   # 거래대금 단위 자동 보정
+        u = min((1e8, 1e6, 1e3, 1), key=lambda u: abs(amt * u / vol / cur - 1))   # 거래대금 단위 자동 보정
         vw = amt * u / vol
         rows.append(dict(code=c, name=names.get(c, c), mc=mc.get(c, 0), prev=prev, cur=cur, open=op, high=hi, vol=vol,
                          amt=round(amt * u / 1e8, 1), chg=cur / prev - 1, gap=op / prev - 1, hi_chg=hi / prev - 1,
@@ -211,6 +231,7 @@ def main():
             b = pd.DataFrame(s["rows"]).set_index("code")
             df["d_amt"] = (df.amt - b.amt.reindex(df.index)).round(1)
             df["d_chg"] = ((df.chg - b.chg.reindex(df.index)) * 100).round(2)
+            df["p_chg"] = b.chg.reindex(df.index)
     except Exception:
         pass
     json.dump({"date": TODAY, "time": now().strftime("%H:%M"),
@@ -218,26 +239,22 @@ def main():
               open(f"docs/snap_{SLOT}.json", "w"))
 
     top = df.sort_values("score", ascending=False).head(SHOW)
-    with TP(8) as ex:
-        mm = dict(ex.map(minute, list(top.index[:30])))
+    fo, og = flow("foreignPureBuy"), flow("organizationPureBuy")
     nw = {c: news(top.loc[c, "name"]) for c in top.index[:15]}
     mac, kc = macro(), kospi_chg()
 
     # ---- 출력 ----
     P = lambda x: "" if pd.isna(x) else f"{x * 100:+.1f}"
     cols = ["#", "종목", "시총", "현재가", "등락%", "갭%", "장초高%", "고점比%", "VWAP比%", "대금억", "Δ대금억",
-            "Δ등락%p", "거래량%", "5일%", "점수", "진입참고", "손절", "익절", "5분경로(전일比%)", "고점시각", "뉴스"]
+            "직전등락%", "Δ등락%p", "거래량%", "5일%", "외인순위", "기관순위", "점수", "진입참고", "손절", "익절", "뉴스"]
     out = []
     for i, (c, r) in enumerate(top.iterrows(), 1):
-        m = mm.get(c) or {}
-        entry = round(min(r.cur, r.high * .97))
+        entry = tick(min(r.cur, r.high * .97))
         out.append([i, f"{r['name']}({c})", int(r.mc), f"{r.cur:,.0f}", P(r.chg), P(r.gap), P(r.hi_chg), P(-r.pull),
                     P(r.vs_vwap), f"{r.amt:,.0f}", "" if pd.isna(r.get("d_amt")) else f"{r.d_amt:+,.0f}",
-                    "" if pd.isna(r.get("d_chg")) else f"{r.d_chg:+.1f}",
-                    "" if pd.isna(r.vmult) else f"{r.vmult * 100:.0f}", P(r.ret5), r.score, f"{entry:,}",
-                    f"{entry * .97:,.0f}", f"{entry * 1.06:,.0f}",
-                    " ".join(f"{(x / r.prev - 1) * 100:+.0f}" for x in m.get("path", [])), m.get("hi_t", ""),
-                    nw.get(c, "")])
+                    P(r.get("p_chg")), "" if pd.isna(r.get("d_chg")) else f"{r.d_chg:+.1f}",
+                    "" if pd.isna(r.vmult) else f"{r.vmult * 100:.0f}", P(r.ret5), fo.get(c, ""), og.get(c, ""),
+                    r.score, f"{entry:,}", f"{tick(entry * .97):,.0f}", f"{tick(entry * 1.06):,.0f}", nw.get(c, "")])
     stamp = now().strftime("%Y-%m-%d %H:%M:%S KST")
     mline = " | ".join(f"{k} {v:+.2f}%" for k, v in mac.items()) or "매크로 수집 실패"
     mline = (f"코스피 {kc:+.2f}% | " if kc is not None else "") + mline
@@ -251,7 +268,7 @@ def main():
 body{{margin:0;padding:12px;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Noto Sans KR",sans-serif}}
 h1{{font-size:18px;margin:0 0 4px}}p{{margin:4px 0;color:var(--mut)}}.w{{overflow-x:auto}}
 table{{border-collapse:collapse;font-size:12px;white-space:nowrap}}th,td{{border:1px solid var(--line);padding:3px 6px;text-align:right}}
-td:nth-child(2),td:nth-child(21){{text-align:left}}th{{position:sticky;top:0;background:var(--bg)}}
+td:nth-child(2),td:last-child{{text-align:left}}th{{position:sticky;top:0;background:var(--bg)}}
 pre{{font-size:11px;overflow-x:auto;border:1px solid var(--line);padding:8px}}button{{padding:8px 14px;font:inherit}}</style></head><body>
 <h1>코스피 시총 {TOP_N} 장초 스냅샷 ({SLOT})</h1>
 <p>생성 {stamp} | 수집 {len(full)}종목 | 1차필터 {len(df)}종목 중 점수 상위 {SHOW}</p><p>{html.escape(mline)}</p>
