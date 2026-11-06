@@ -1,27 +1,14 @@
-2026-11-05 11:18:54 KST
+2026-11-06 10:53:04 KST
+버전 v7-1106 슬롯 now
 유니버스(시총 페이지) 0
-유니버스(폴백 후) 309
+유니버스(폴백 후) 312
 시세 응답 종목수 300
-원시 005930 {'closePrice': '206,500', 'accumulatedTradingVolume': '10,161,238', 'accumulatedTradingValue': '2조 1,021억', 'marketStatus': 'OPEN', 'localTradedAt': '2026-11-05T11:18:12.226538+09:00'}
-대금 비교 003670 폴링 424.0 억 / 상세 775.0 억 ('775억', '433,318')
-대금 비교 007660 폴링 184.0 억 / 상세 369.0 억 ('369억', '497,868')
-대금 비교 062040 폴링 326.0 억 / 상세 509.0 억 ('509억', '369,784')
-대금 비교 047810 폴링 136.0 억 / 상세 187.0 억 ('187억', '175,294')
-대금 상세 보정 105 / 105
-수급 f trend/trendForeignOrg FOREIGNER 100 -> 0 {"sections":{"buyRankList":[{"itemcode":"035720","itemname":"카카오","bizdateFrom":"20261105","bizdateTo":"20261105","accTradeVolume":"292007","accTradeA
-수급 f trend/trendForeignOrg FOREIGNER 20 -> 0 {"sections":{"buyRankList":[{"itemcode":"035720","itemname":"카카오","bizdateFrom":"20261105","bizdateTo":"20261105","accTradeVolume":"292007","accTradeA
-수급 f stock/default foreignPureBuy 100 -> 0 [{"itemname":"카카오","itemcode":"035720","sosok":"0","upDownGb":"2","type":"ST","upperLimitPrice":"37800","lowerLimitPrice":"20400","manageStatusGb":"0"
-수급 f stock/default foreignPureBuy 20 -> 0 [{"itemname":"카카오","itemcode":"035720","sosok":"0","upDownGb":"2","type":"ST","upperLimitPrice":"37800","lowerLimitPrice":"20400","manageStatusGb":"0"
-수급 o trend/trendForeignOrg ORGANIZATION 100 -> 0 {"sections":{"buyRankList":[{"itemcode":"252670","itemname":"KODEX 200선물인버스2X","bizdateFrom":"20261103","bizdateTo":"20261103","accTradeVolume":"79093
-수급 o trend/trendForeignOrg ORGANIZATION 20 -> 0 {"sections":{"buyRankList":[{"itemcode":"252670","itemname":"KODEX 200선물인버스2X","bizdateFrom":"20261103","bizdateTo":"20261103","accTradeVolume":"79093
-GET 실패 https://stock.naver.com/api/domestic/market/trend/trendForeignOrg HTTPError 400
-수급 o trend/trendForeignOrg ORGAN 100 -> 0 
-GET 실패 https://stock.naver.com/api/domestic/market/trend/trendForeignOrg HTTPError 400
-수급 o trend/trendForeignOrg ORGAN 20 -> 0 
-GET 실패 https://stock.naver.com/api/domestic/market/trend/trendForeignOrg HTTPError 400
-수급 o trend/trendForeignOrg INSTITUTION 100 -> 0 
-GET 실패 https://stock.naver.com/api/domestic/market/trend/trendForeignOrg HTTPError 400
-수급 o trend/trendForeignOrg INSTITUTION 20 -> 0 
-수급 o stock/default organizationPureBuy 100 -> 0 [{"itemname":"KODEX 200선물인버스2X","itemcode":"252670","sosok":"0","upDownGb":"2","type":"EF","upperLimitPrice":"160","lowerLimitPrice":"40","manageStatu
-수급 o stock/default organizationPureBuy 20 -> 0 [{"itemname":"KODEX 200선물인버스2X","itemcode":"252670","sosok":"0","upDownGb":"2","type":"EF","upperLimitPrice":"160","lowerLimitPrice":"40","manageStatu
-완료 now 2026-11-05 11:18:54 KST 299 40
+원시 005930 {'closePrice': '187,900', 'accumulatedTradingVolume': '13,559,674', 'accumulatedTradingValue': '2조 5,077억', 'marketStatus': 'OPEN', 'localTradedAt': '2026-11-06T10:52:32.683499+09:00'}
+대금 비교 009540 폴링 128.0 억 / 상세 163.0 억 ('163억', '70,258')
+대금 비교 005250 폴링 1.7 억 / 상세 2.9 억 ('2.86억', '30,483')
+대금 비교 034220 폴링 111.0 억 / 상세 111.0 억 ('111억', '1,605,204')
+대금 비교 010120 폴링 446.0 억 / 상세 832.0 억 ('832억', '738,534')
+대금 상세 보정 110 / 110
+수급 f KOSPI 300 -> 100 
+수급 o KOSPI 300 -> 100 
+완료 now 2026-11-06 10:53:04 KST 299 40
